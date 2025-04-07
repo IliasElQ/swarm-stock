@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  api:
+    image: localhost:5000/stock-swarm-demo/api:latest
+    build: ./api
+    ports:
+      - "8080:8080"
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+    environment:
+      - NODE_ID={{.Node.ID}}
+      - SERVICE_ID={{.Service.ID}}
+      - NODE_HOSTNAME={{.Node.Labels.hostname}}  
+      - TASK_ID={{.Task.ID}}
+
+  data-generator:
+    image: localhost:5000/stock-swarm-demo/data-generator:latest
+    build: ./data-generator
+    deploy:
+      mode: replicated
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+    environment:
+      - UPDATE_FREQUENCY=500
+
+  frontend:
+    image: localhost:5000/stock-swarm-demo/frontend:latest
+    build: ./frontend
+    ports:
+      - "80:80"
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+    depends_on:
+      - api
+
+networks:
+  default:
+    driver: overlay
+    attachable: true

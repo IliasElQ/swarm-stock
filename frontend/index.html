@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Démo Docker Swarm - Marché Boursier Virtuel</title>
+    
+    <!-- Local Chart.js Dependencies -->
+    <script src="/moment.min.js"></script>
+    <script src="/chart.min.js"></script>
+    <script src="/chartjs-adapter-moment.min.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            background-color: #333;
+            padding: 15px;
+            border-radius: 5px;
+            color: white;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .stock-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stock-card {
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 15px;
+            transition: transform 0.2s;
+            cursor: pointer;
+        }
+        .stock-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        .stock-symbol {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .stock-name {
+            color: #666;
+            margin-bottom: 10px;
+        }
+        .stock-price {
+            font-size: 20px;
+            font-weight: bold;
+        }
+        .positive {
+            color: #28a745;
+        }
+        .negative {
+            color: #dc3545;
+        }
+        .chart-container {
+            margin-top: 20px;
+            height: 400px;
+            background-color: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .node-info {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            font-size: 14px;
+            border: 1px solid #dee2e6;
+        }
+        .node-info-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #495057;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .metric-card {
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 15px;
+        }
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+        .metric-title {
+            color: #6c757d;
+            font-size: 14px;
+        }
+        select, button {
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #ced4da;
+            font-size: 14px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Marché Boursier Virtuel - Démo Docker Swarm</h1>
+            <div class="controls">
+                <label for="update-speed">Vitesse:</label>
+                <select id="update-speed">
+                    <option value="2000">Lente</option>
+                    <option value="1000" selected>Normale</option>
+                    <option value="500">Rapide</option>
+                    <option value="200">Très rapide</option>
+                    <option value="100">Extrême</option>
+                </select>
+                <button id="toggle-metrics">Afficher les métriques</button>
+            </div>
+        </div>
+        
+        <div id="stocks-container" class="stock-grid"></div>
+        
+        <div class="chart-container">
+            <canvas id="stock-chart"></canvas>
+        </div>
+        
+        <div class="node-info">
+            <div class="node-info-title">Informations sur le nœud:</div>
+            <div id="node-info-content">Chargement des données...</div>
+        </div>
+        
+        <div id="metrics-container" class="metrics" style="display: none;"></div>
+    </div>
+
+    <script>
+        // Configuration
+        const API_URL = '';  // Use relative URLs for Swarm routing
+        
+        // Chart configuration
+        let updateInterval = 1000;
+        let updateTimer = null;
+        let selectedStock = 'AAPL';
+        let stockChart = null;
+        let metricsVisible = false;
+        const nodeRequests = {};
+        const NODE_HOSTNAME = process.env.NODE_HOSTNAME || 'unknown';
+
+
+        // Initialize Chart with date adapter verification
+        function initChart() {
+            if (typeof Chart === 'undefined' || typeof moment === 'undefined') {
+                console.error('Chart.js or Moment.js not loaded!');
+                return;
+            }
+
+            const ctx =init  document.getElementById('stock-chart').getContext('2d');
+            stockChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: selectedStock,
+                        borderColor: '#4CAF50',
+                        tension: 0.1,
+                        data: []
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                parser: 'YYYY-MM-DDTHH:mm:ss.SSSZ',
+                                tooltipFormat: 'll HH:mm',
+                                unit: 'minute'
+                            },
+                            title: {
+                                display: true,
+                                text: 'Temps'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Prix ($)'
+                            },
+                            beginAtZero: false
+                        }
+                    }
+                }
+            });
+        }
+
+        // Data fetching with error handling
+        async function fetchData(url) {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return await response.json();
+            } catch (error) {
+                console.error('Erreur de récupération:', error);
+                throw error;
+            }
+        }
+
+        async function updateStockData() {
+            try {
+                const data = await fetchData(`${API_URL}/stock-data`);
+                updateStockCards(data.stocks);
+                updateNodeInfo(data.node);
+                
+                // Track node requests
+                if (data.node?.hostname) {
+                    nodeRequests[data.node.hostname] = (nodeRequests[data.node.hostname] || 0) + 1;
+                }
+
+                // Schedule next update
+                clearTimeout(updateTimer);
+                updateTimer = setTimeout(updateStockData, updateInterval);
+            } catch (error) {
+                console.error('Erreur de mise à jour:', error);
+                clearTimeout(updateTimer);
+                updateTimer = setTimeout(updateStockData, Math.min(updateInterval * 2, 10000));
+            }
+        }
+
+        async function updateStockHistory(symbol) {
+            try {
+                const data = await fetchData(`${API_URL}/stock-history/${symbol}`);
+                
+                stockChart.data.datasets[0].label = symbol;
+                stockChart.data.datasets[0].data = data.history.map(point => ({
+                    x: new Date(point.timestamp),
+                    y: point.price
+                }));
+                stockChart.update();
+                
+                updateNodeInfo(data.node);
+            } catch (error) {
+                console.error('Erreur historique:', error);
+            }
+        }
+
+        // UI Updates
+        function updateStockCards(stocks) {
+            const container = document.getElementById('stocks-container');
+            container.innerHTML = stocks.map(stock => `
+                <div class="stock-card" data-symbol="${stock.symbol}" 
+                     style="${stock.symbol === selectedStock ? 'border: 2px solid #4CAF50' : ''}">
+                    <div class="stock-symbol">${stock.symbol}</div>
+                    <div class="stock-name">${stock.name}</div>
+                    <div class="stock-price">${stock.price.toFixed(2)} $</div>
+                    <div class="stock-change ${stock.change_pct >= 0 ? 'positive' : 'negative'}">
+                        ${stock.change_pct >= 0 ? '+' : ''}${stock.change_pct.toFixed(2)}%
+                    </div>
+                </div>
+            `).join('');
+
+            // Add click handlers
+            document.querySelectorAll('.stock-card').forEach(card => {
+                card.addEventListener('click', () => {
+                    selectedStock = card.dataset.symbol;
+                    updateStockHistory(selectedStock);
+                    document.querySelectorAll('.stock-card').forEach(c => 
+                        c.style.border = c === card ? '2px solid #4CAF50' : 'none'
+                    );
+                });
+            });
+        }
+
+        function updateNodeInfo(node) {
+            if (!node) return;
+            document.getElementById('node-info-content').innerHTML = `
+                <strong>Hôte:</strong> ${node.hostname}<br>
+                <strong>Node ID:</strong> ${node.nodeId?.substring(0, 8) || 'N/A'}...<br>
+                <strong>Service ID:</strong> ${node.serviceId?.substring(0, 8) || 'N/A'}...<br>
+                <strong>Task ID:</strong> ${node.taskId?.substring(0, 8) || 'N/A'}...
+            `;
+        }
+
+        // Metrics handling
+        async function updateMetrics() {
+            if (!metricsVisible) return;
+            
+            try {
+                const data = await fetchData(`${API_URL}/metrics`);
+                const metricsHTML = `
+                    <div class="metric-card">
+                        <div class="metric-value">${data.requestsPerSecond.toFixed(2)}</div>
+                        <div class="metric-title">Requêtes/s</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">${(data.memory.free / 1024 / 1024).toFixed(0)} Mo</div>
+                        <div class="metric-title">Mémoire libre</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">${data.loadAverage[0].toFixed(2)}</div>
+                        <div class="metric-title">Charge CPU (1min)</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-title">Distribution requêtes</div>
+                        <ul>${Object.entries(nodeRequests).map(([node, count]) => 
+                            `<li>${node}: ${count}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+                
+                document.getElementById('metrics-container').innerHTML = metricsHTML;
+                setTimeout(updateMetrics, 2000);
+            } catch (error) {
+                console.error('Erreur métriques:', error);
+                setTimeout(updateMetrics, 5000);
+            }
+        }
+
+        // Event Listeners
+        document.getElementById('update-speed').addEventListener('change', function() {
+            updateInterval = parseInt(this.value);
+            clearTimeout(updateTimer);
+            updateTimer = setTimeout(updateStockData, updateInterval);
+        });
+
+        document.getElementById('toggle-metrics').addEventListener('click', function() {
+            metricsVisible = !metricsVisible;
+            const metricsContainer = document.getElementById('metrics-container');
+            metricsContainer.style.display = metricsVisible ? 'grid' : 'none';
+            this.textContent = metricsVisible ? 'Masquer métriques' : 'Afficher métriques';
+            if (metricsVisible) updateMetrics();
+        });
+
+        // Initialize
+        window.addEventListener('load', () => {
+            initChart();
+            updateStockData();
+            updateStockHistory(selectedStock);
+        });
+    </script>
+</body>
+</html>
